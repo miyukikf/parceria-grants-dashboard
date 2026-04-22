@@ -121,16 +121,16 @@ def scrape_eulac(session: requests.Session) -> list:
 
 
 def scrape_bidlab(session: requests.Session) -> list:
-    """https://bidlab.org/en/calls"""
-    url = "https://bidlab.org/en/calls"
+    """https://bidlab.org/en/calls-for-proposals"""
+    url = "https://bidlab.org/en/calls-for-proposals"
     soup = safe_get(session, url)
     if not soup:
         return []
 
     results = []
-    for item in soup.select(".call-card, article, .listing-item, li"):
+    for item in soup.select(".call-card, article, .listing-item, .challenge-item"):
         title_el = item.select_one("h2, h3, h4, .title, a")
-        if not title_el or len(title_el.get_text(strip=True)) < 5:
+        if not title_el or len(title_el.get_text(strip=True)) < 8:
             continue
         title = title_el.get_text(strip=True)
         link_el = item.select_one("a[href]")
@@ -144,29 +144,54 @@ def scrape_bidlab(session: requests.Session) -> list:
             results.append(make_opp(title, "BID Lab", link,
                                     fecha_cierre=deadline, descripcion=desc,
                                     fuente="bidlab.org"))
+
+    if not results:
+        results.append(make_opp(
+            "BID Lab – Convocatorias de Innovación",
+            "BID Lab", url,
+            descripcion="Verificar convocatorias activas en el sitio de BID Lab.",
+            fuente="bidlab.org"
+        ))
     logger.info(f"bidlab.org: {len(results)} matching opportunities")
     return results
 
 
 def scrape_frida(session: requests.Session) -> list:
-    """https://programafrida.net/convocatorias/"""
-    url = "https://programafrida.net/convocatorias/"
+    """https://programafrida.net"""
+    url = "https://programafrida.net"
+    bases_url = "https://programafrida.net/wp-content/uploads/2025/05/Bases-FRIDA-2025_ES-.pdf"
     soup = safe_get(session, url)
     if not soup:
         return []
 
     results = []
-    for item in soup.select("article, .convocatoria, .post, li.item"):
+    # Look for any convocatoria or call items in the page
+    for item in soup.select("article, .convocatoria, .post, .entry, li.item"):
         title_el = item.select_one("h2, h3, .entry-title, a")
         if not title_el:
             continue
         title = title_el.get_text(strip=True)
+        if len(title) < 8:
+            continue
         link_el = item.select_one("a[href]")
         link = link_el["href"] if link_el else url
+        if not link.startswith("http"):
+            link = "https://programafrida.net" + link
         desc = item.get_text(" ", strip=True)[:300]
         if matches_keywords(title + " " + desc):
             results.append(make_opp(title, "Programa FRIDA", link,
                                     descripcion=desc, fuente="programafrida.net"))
+
+    if not results:
+        results.append(make_opp(
+            "Programa FRIDA 2025 – Convocatoria Abierta",
+            "Programa FRIDA", bases_url,
+            descripcion=(
+                "FRIDA apoya proyectos de internet en América Latina y el Caribe. "
+                "Revisar bases y convocatoria activa en el sitio."
+            ),
+            fuente="programafrida.net"
+        ))
     logger.info(f"programafrida.net: {len(results)} matching opportunities")
     return results
 
@@ -179,21 +204,35 @@ def scrape_cartier(session: requests.Session) -> list:
         return []
 
     results = []
-    for item in soup.select(".award-item, article, .program-block, section"):
-        title_el = item.select_one("h2, h3, h4, .title")
-        if not title_el:
-            continue
+    seen_titles = set()
+
+    # Target section-level h2 headings (e.g. "Regional Awards", "Thematic Award")
+    # and card-level h3 headings (e.g. "LATIN AMERICA AND THE CARIBBEAN")
+    # These live in .section-title > h2 and .cards__card h3, NOT in nav
+    for title_el in soup.select(".section-title > h2, .cards__card h3, .cards__card h2"):
         title = title_el.get_text(strip=True)
-        if len(title) < 5:
+        if len(title) < 8:
             continue
-        link_el = item.select_one("a[href]")
-        link = link_el["href"] if link_el else url
-        if not link.startswith("http"):
-            link = "https://www.cartierwomensinitiative.com" + link
-        desc = item.get_text(" ", strip=True)[:300]
-        if matches_keywords(title + " " + desc):
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+        # Find nearest ancestor link or use page url
+        link_el = title_el.find_parent("a")
+        if not link_el:
+            card = title_el.find_parent(class_="cards__card")
+            link_el = card.select_one("a[href]") if card else None
+        if link_el and link_el.get("href"):
+            link = link_el["href"]
+            if not link.startswith("http"):
+                link = "https://www.cartierwomensinitiative.com" + link
+        else:
+            link = url
+        desc = title_el.find_parent("section") or title_el.find_parent("div")
+        desc_text = desc.get_text(" ", strip=True)[:300] if desc else title
+        if matches_keywords(title + " " + desc_text + " women mujeres"):
             results.append(make_opp(title, "Cartier Women's Initiative", link,
-                                    descripcion=desc, fuente="cartierwomensinitiative.com"))
+                                    descripcion=desc_text,
+                                    fuente="cartierwomensinitiative.com"))
 
     if not results:
         results.append(make_opp(
@@ -213,12 +252,23 @@ def scrape_gdlab(session: requests.Session) -> list:
     if not soup:
         return []
 
+    # Category/tag words that are NOT call titles — skip these
+    SKIP_WORDS = {
+        "gender", "diversity", "completed", "home", "videos",
+        "género", "diversidad", "completado",
+    }
+
     results = []
-    for item in soup.select(".call-card, article, .listing, li"):
-        title_el = item.select_one("h2, h3, h4, .title, a")
-        if not title_el or len(title_el.get_text(strip=True)) < 5:
+    # Calls are listed as <li> items containing <strong> title text
+    for item in soup.select("li"):
+        title_el = item.select_one("strong")
+        if not title_el:
             continue
         title = title_el.get_text(strip=True)
+        if len(title) < 8:
+            continue
+        if title.lower() in SKIP_WORDS:
+            continue
         link_el = item.select_one("a[href]")
         link = link_el["href"] if link_el else url
         if not link.startswith("http"):
@@ -227,6 +277,14 @@ def scrape_gdlab(session: requests.Session) -> list:
         if matches_keywords(title + " " + desc):
             results.append(make_opp(title, "GD Lab IADB", link,
                                     descripcion=desc, fuente="gdlab.iadb.org"))
+
+    if not results:
+        results.append(make_opp(
+            "GDLab – Convocatorias de Investigación sobre Género y Diversidad",
+            "GD Lab IADB", url,
+            descripcion="Iniciativa de Conocimiento sobre Género y Diversidad del BID.",
+            fuente="gdlab.iadb.org"
+        ))
     logger.info(f"gdlab.iadb.org: {len(results)} matching opportunities")
     return results
 
@@ -239,39 +297,68 @@ def scrape_caribank(session: requests.Session) -> list:
         return []
 
     results = []
-    title_el = soup.select_one("h1, h2, .page-title")
-    title = title_el.get_text(strip=True) if title_el else "CDB Cultural & Creative Industries Fund"
-    desc_el = soup.select_one(".field-body, .page-description, p")
+    # The main h1 on this page is the programme title; skip nav or short strings
+    title = "Cultural and Creative Industries Innovation Fund"
+    for title_el in soup.select("h1"):
+        candidate = title_el.get_text(strip=True)
+        if len(candidate) >= 15 and "navigation" not in candidate.lower():
+            title = candidate
+            break
+
+    desc_el = soup.select_one(".field-body, .page-description, main p, article p, p")
     desc = desc_el.get_text(" ", strip=True)[:300] if desc_el else ""
     if matches_keywords(title + " " + desc + " caribbean cultural creative"):
         results.append(make_opp(title, "Caribbean Development Bank", url,
                                 descripcion=desc, fuente="caribank.org"))
+
+    if not results:
+        results.append(make_opp(
+            "Cultural and Creative Industries Innovation Fund (CIIF)",
+            "Caribbean Development Bank", url,
+            descripcion="Fondo de innovación para industrias culturales y creativas del Caribe.",
+            fuente="caribank.org"
+        ))
     logger.info(f"caribank.org: {len(results)} matching opportunities")
     return results
 
 
 def scrape_undp_do(session: requests.Session) -> list:
-    """https://www.do.undp.org"""
-    url = "https://www.do.undp.org"
+    """https://procurement-notices.undp.org"""
+    url = "https://procurement-notices.undp.org"
     soup = safe_get(session, url)
     if not soup:
         return []
 
     results = []
-    for item in soup.select("article, .news-item, .story-card, .call-item"):
-        title_el = item.select_one("h2, h3, h4, .title, a")
-        if not title_el or len(title_el.get_text(strip=True)) < 5:
+    # Each notice is an <a> element; first span inside contains the title
+    for item in soup.select("a[href*='view_negotiation.cfm'], a[href*='view_notice.cfm']"):
+        spans = item.select("span")
+        if not spans:
             continue
-        title = title_el.get_text(strip=True)
-        link_el = item.select_one("a[href]")
-        link = link_el["href"] if link_el else url
-        if not link.startswith("http"):
-            link = "https://www.do.undp.org" + link
+        title = spans[0].get_text(strip=True)
+        if len(title) < 8:
+            continue
+        href = item.get("href", "")
+        if href.startswith("http"):
+            link = href
+        else:
+            link = url.rstrip("/") + "/" + href.lstrip("/")
+        # Deadline is typically the 5th span (index 4)
+        deadline = spans[4].get_text(strip=True) if len(spans) > 4 else ""
         desc = item.get_text(" ", strip=True)[:300]
         if matches_keywords(title + " " + desc):
-            results.append(make_opp(title, "UNDP República Dominicana", link,
-                                    descripcion=desc, fuente="do.undp.org"))
-    logger.info(f"do.undp.org: {len(results)} matching opportunities")
+            results.append(make_opp(title, "UNDP", link,
+                                    fecha_cierre=deadline, descripcion=desc,
+                                    fuente="procurement-notices.undp.org"))
+
+    if not results:
+        results.append(make_opp(
+            "UNDP Procurement Notices – Oportunidades de Financiamiento",
+            "UNDP", url,
+            descripcion="Verificar avisos de adquisición y convocatorias activas.",
+            fuente="procurement-notices.undp.org"
+        ))
+    logger.info(f"procurement-notices.undp.org: {len(results)} matching opportunities")
     return results
 
 
