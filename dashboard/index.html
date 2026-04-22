@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Parcería — Dashboard de Fondos</title>
+  <style>
+    :root {
+      --verde: #2D6A4F;
+      --amarillo: #F4C430;
+      --gris: #4A4A4A;
+      --verde-claro: #e8f5e9;
+      --rojo: #e74c3c;
+      --naranja: #f39c12;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f7f5; color: var(--gris); }
+
+    header {
+      background: var(--verde);
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    header h1 { color: var(--amarillo); font-size: 1.6rem; }
+    header p  { color: #cde8d6; font-size: 0.85rem; margin-top: 2px; }
+    #last-updated { color: #afd9be; font-size: 0.78rem; text-align: right; }
+
+    .controls {
+      background: #fff;
+      padding: 16px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      border-bottom: 2px solid var(--verde-claro);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    }
+    .controls input, .controls select {
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .controls input:focus, .controls select:focus { border-color: var(--verde); }
+    #search { flex: 1; min-width: 200px; }
+    .stat-chip {
+      background: var(--verde-claro);
+      color: var(--verde);
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 18px;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      overflow: hidden;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+      display: flex;
+      flex-direction: column;
+    }
+    .card:hover { transform: translateY(-3px); box-shadow: 0 6px 18px rgba(0,0,0,0.13); }
+
+    .card-urgency-bar { height: 5px; }
+    .urgency-alta   .card-urgency-bar { background: var(--rojo); }
+    .urgency-media  .card-urgency-bar { background: var(--naranja); }
+    .urgency-baja   .card-urgency-bar,
+    .urgency-default .card-urgency-bar { background: var(--verde); }
+
+    .card-body { padding: 16px; flex: 1; }
+    .card-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--verde);
+      margin-bottom: 6px;
+      line-height: 1.3;
+    }
+    .card-entidad { font-size: 0.8rem; color: #888; margin-bottom: 10px; }
+    .card-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+    .badge { font-size: 0.72rem; padding: 3px 8px; border-radius: 12px; font-weight: 600; }
+    .badge-estado    { background: #e3f2fd; color: #1565c0; }
+    .badge-urgencia  { color: #fff; }
+    .badge-alta      { background: var(--rojo); }
+    .badge-media     { background: var(--naranja); }
+    .badge-baja      { background: var(--verde); }
+    .badge-entidad-p { background: #fff3cd; color: #856404; }
+
+    .card-footer {
+      padding: 10px 16px;
+      background: #fafafa;
+      border-top: 1px solid #f0f0f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.78rem;
+      color: #999;
+    }
+    .card-monto { color: var(--gris); font-weight: 600; }
+
+    .empty {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 60px 20px;
+      color: #aaa;
+    }
+    .empty p { font-size: 1.1rem; margin-top: 8px; }
+
+    #loading {
+      text-align: center;
+      padding: 60px;
+      color: var(--verde);
+      font-size: 1.1rem;
+    }
+
+    @media (max-width: 600px) {
+      header { padding: 14px 16px; }
+      header h1 { font-size: 1.2rem; }
+      .controls { padding: 12px 16px; }
+      .grid { padding: 14px; gap: 14px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Parcería — Dashboard de Fondos</h1>
+    <p>Monitor automático de oportunidades de financiamiento</p>
+  </div>
+  <div id="last-updated">Cargando...</div>
+</header>
+
+<div class="controls">
+  <input type="text" id="search" placeholder="Buscar por nombre o entidad...">
+  <select id="filter-estado">
+    <option value="">Todos los estados</option>
+    <option>Identificado</option>
+    <option>En preparación</option>
+    <option>Enviado</option>
+    <option>Aprobado</option>
+    <option>Rechazado</option>
+  </select>
+  <select id="filter-entidad-p">
+    <option value="">Todas las entidades</option>
+    <option>Parcería</option>
+    <option>Fundación</option>
+    <option>Gina</option>
+    <option>Todos</option>
+  </select>
+  <select id="filter-urgencia">
+    <option value="">Todas las urgencias</option>
+    <option value="Alta">Alta (menos de 14 días)</option>
+    <option value="Media">Media (menos de 30 días)</option>
+    <option value="Baja">Baja / Sin fecha</option>
+  </select>
+  <span class="stat-chip" id="count-chip">0 oportunidades</span>
+</div>
+
+<div id="loading">Cargando oportunidades...</div>
+<div class="grid" id="grid" style="display:none"></div>
+
+<script>
+  const SHEET_ID = "1dU2Tep3gakBNDPR5zRJdth_MDb5X_TVUratBgmQESHg";
+  const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+
+  let allOpps = [];
+
+  async function loadData() {
+    try {
+      const res = await fetch(GVIZ_URL);
+      const text = await res.text();
+      const json = JSON.parse(text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1));
+      const cols = json.table.cols.map(c => c.label);
+      const rows = json.table.rows || [];
+
+      allOpps = rows.map(row => {
+        const obj = {};
+        cols.forEach((col, i) => {
+          const cell = row.c[i];
+          obj[col] = cell ? (cell.f || cell.v || "") : "";
+        });
+        return obj;
+      }).filter(o => o["Nombre"] || o["nombre"] || o["URL"] || o["url"]);
+
+      document.getElementById("last-updated").textContent =
+        `Última carga: ${new Date().toLocaleString('es-DO')}`;
+
+      renderCards(filterOpps());
+      document.getElementById("loading").style.display = "none";
+      document.getElementById("grid").style.display = "grid";
+    } catch (e) {
+      document.getElementById("loading").textContent =
+        "Error al cargar datos. Asegúrate de que el Sheet es público.";
+      console.error(e);
+    }
+  }
+
+  function f(opp, ...keys) {
+    for (const k of keys) {
+      if (opp[k] !== undefined && opp[k] !== "") return opp[k];
+      const cap = k.charAt(0).toUpperCase() + k.slice(1);
+      if (opp[cap] !== undefined && opp[cap] !== "") return opp[cap];
+    }
+    return "";
+  }
+
+  function urgencyClass(urgencia) {
+    const u = (urgencia || "").toLowerCase();
+    if (u === "alta")  return "urgency-alta";
+    if (u === "media") return "urgency-media";
+    if (u === "baja")  return "urgency-baja";
+    return "urgency-default";
+  }
+
+  function urgencyBadgeClass(urgencia) {
+    const u = (urgencia || "").toLowerCase();
+    if (u === "alta")  return "badge-alta";
+    if (u === "media") return "badge-media";
+    return "badge-baja";
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+
+  function renderCards(opps) {
+    const grid = document.getElementById("grid");
+    const chip = document.getElementById("count-chip");
+    chip.textContent = `${opps.length} oportunidad${opps.length !== 1 ? "es" : ""}`;
+
+    if (opps.length === 0) {
+      grid.innerHTML = `<div class="empty">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <p>No se encontraron oportunidades con esos filtros.</p>
+      </div>`;
+      return;
+    }
+
+    grid.innerHTML = opps.map(opp => {
+      const nombre   = f(opp, "Nombre", "nombre") || "(Sin nombre)";
+      const entidad  = f(opp, "Entidad", "entidad");
+      const monto    = f(opp, "Monto", "monto");
+      const cierre   = f(opp, "Fecha_Cierre", "fecha_cierre");
+      const estado   = f(opp, "Estado", "estado") || "Identificado";
+      const urgencia = f(opp, "Urgencia", "urgencia") || "";
+      const entidadP = f(opp, "Entidad_Parceria", "entidad_parceria");
+      const url      = f(opp, "URL", "url");
+      const uClass   = urgencyClass(urgencia);
+      const uBadge   = urgencyBadgeClass(urgencia);
+
+      return `
+        <div class="card ${uClass}" onclick="${url ? `window.open('${url.replace(/'/g,"\\'")}','_blank')` : ''}">
+          <div class="card-urgency-bar"></div>
+          <div class="card-body">
+            <div class="card-title">${escHtml(nombre)}</div>
+            <div class="card-entidad">${escHtml(entidad)}</div>
+            <div class="card-meta">
+              ${estado    ? `<span class="badge badge-estado">${escHtml(estado)}</span>` : ""}
+              ${urgencia  ? `<span class="badge badge-urgencia ${uBadge}">${escHtml(urgencia)}</span>` : ""}
+              ${entidadP  ? `<span class="badge badge-entidad-p">${escHtml(entidadP)}</span>` : ""}
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>${cierre ? "Cierre: " + escHtml(cierre) : "Sin fecha de cierre"}</span>
+            <span class="card-monto">${monto ? escHtml(monto) : ""}</span>
+          </div>
+        </div>`;
+    }).join("");
+  }
+
+  function filterOpps() {
+    const q        = document.getElementById("search").value.toLowerCase();
+    const estado   = document.getElementById("filter-estado").value;
+    const entidadP = document.getElementById("filter-entidad-p").value;
+    const urgencia = document.getElementById("filter-urgencia").value;
+
+    return allOpps.filter(opp => {
+      const nombre = (f(opp,"Nombre","nombre") + " " + f(opp,"Entidad","entidad")).toLowerCase();
+      if (q && !nombre.includes(q)) return false;
+      if (estado   && f(opp,"Estado","estado")                       !== estado)   return false;
+      if (entidadP && f(opp,"Entidad_Parceria","entidad_parceria")    !== entidadP) return false;
+      if (urgencia && f(opp,"Urgencia","urgencia")                    !== urgencia) return false;
+      return true;
+    });
+  }
+
+  ["search","filter-estado","filter-entidad-p","filter-urgencia"].forEach(id => {
+    document.getElementById(id).addEventListener("input", () => renderCards(filterOpps()));
+  });
+
+  loadData();
+</script>
+</body>
+</html>
