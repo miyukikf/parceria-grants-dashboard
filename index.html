@@ -27,7 +27,45 @@
     }
     header h1 { color: var(--amarillo); font-size: 1.6rem; }
     header p  { color: #cde8d6; font-size: 0.85rem; margin-top: 2px; }
-    #last-updated { color: #afd9be; font-size: 0.78rem; text-align: right; }
+    .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+    #last-updated { color: #afd9be; font-size: 0.78rem; }
+
+    #btn-actualizar {
+      background: var(--amarillo);
+      color: #1a3d2b;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: opacity 0.2s;
+    }
+    #btn-actualizar:hover { opacity: 0.85; }
+    #btn-actualizar:disabled { opacity: 0.5; cursor: not-allowed; }
+    #btn-actualizar .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid #1a3d2b;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    #btn-actualizar.loading .spinner { display: inline-block; }
+    #btn-actualizar.loading .btn-text { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #update-msg {
+      font-size: 0.78rem;
+      padding: 4px 10px;
+      border-radius: 4px;
+      display: none;
+    }
+    #update-msg.success { background: #d4edda; color: #155724; display: block; }
+    #update-msg.error   { background: #f8d7da; color: #721c24; display: block; }
 
     .controls {
       background: #fff;
@@ -81,19 +119,13 @@
     .card:hover { transform: translateY(-3px); box-shadow: 0 6px 18px rgba(0,0,0,0.13); }
 
     .card-urgency-bar { height: 5px; }
-    .urgency-alta   .card-urgency-bar { background: var(--rojo); }
-    .urgency-media  .card-urgency-bar { background: var(--naranja); }
-    .urgency-baja   .card-urgency-bar,
-    .urgency-default .card-urgency-bar { background: var(--verde); }
+    .urgency-alta  .card-urgency-bar { background: var(--rojo); }
+    .urgency-media .card-urgency-bar { background: var(--naranja); }
+    .urgency-baja  .card-urgency-bar,
+    .urgency-      .card-urgency-bar { background: var(--verde); }
 
     .card-body { padding: 16px; flex: 1; }
-    .card-title {
-      font-size: 1rem;
-      font-weight: 700;
-      color: var(--verde);
-      margin-bottom: 6px;
-      line-height: 1.3;
-    }
+    .card-title { font-size: 1rem; font-weight: 700; color: var(--verde); margin-bottom: 6px; line-height: 1.3; }
     .card-entidad { font-size: 0.8rem; color: #888; margin-bottom: 10px; }
     .card-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 
@@ -117,20 +149,9 @@
     }
     .card-monto { color: var(--gris); font-weight: 600; }
 
-    .empty {
-      grid-column: 1 / -1;
-      text-align: center;
-      padding: 60px 20px;
-      color: #aaa;
-    }
+    .empty { grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: #aaa; }
     .empty p { font-size: 1.1rem; margin-top: 8px; }
-
-    #loading {
-      text-align: center;
-      padding: 60px;
-      color: var(--verde);
-      font-size: 1.1rem;
-    }
+    #loading { text-align: center; padding: 60px; color: var(--verde); font-size: 1.1rem; }
 
     @media (max-width: 600px) {
       header { padding: 14px 16px; }
@@ -147,7 +168,14 @@
     <h1>Parcería — Dashboard de Fondos</h1>
     <p>Monitor automático de oportunidades de financiamiento</p>
   </div>
-  <div id="last-updated">Cargando...</div>
+  <div class="header-right">
+    <div id="last-updated">Cargando...</div>
+    <button id="btn-actualizar" onclick="runMonitor()">
+      <span class="spinner"></span>
+      <span class="btn-text">&#9654; Actualizar ahora</span>
+    </button>
+    <div id="update-msg"></div>
+  </div>
 </header>
 
 <div class="controls">
@@ -181,26 +209,49 @@
 
 <script>
   const SHEET_ID = "1dU2Tep3gakBNDPR5zRJdth_MDb5X_TVUratBgmQESHg";
-  const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+  const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=Sheet1`;
 
   let allOpps = [];
 
+  // Column indices (0-based) matching the real Google Sheet layout
+  const COL = {
+    nombre:   0,   // "Nombre de la oportunidad"
+    entidad:  1,   // "Entidad"
+    monto:    2,   // "Cantidad de fondos"
+    apertura: 3,   // "Fecha de apertura"
+    cierre:   4,   // "Fecha de cierre"
+    link:     7,   // "Link"
+    entidadP: 8,   // "Entidad_Parceria"
+    estado:   9,   // "Estado"
+    urgencia: 10,  // "Urgencia"
+  };
+
+  function cellVal(row, idx) {
+    const cell = row.c && row.c[idx];
+    if (!cell) return "";
+    return String(cell.f || cell.v || "").trim();
+  }
+
   async function loadData() {
     try {
-      const res = await fetch(GVIZ_URL);
+      const res  = await fetch(GVIZ_URL);
       const text = await res.text();
       const json = JSON.parse(text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1));
-      const cols = json.table.cols.map(c => c.label);
       const rows = json.table.rows || [];
 
-      allOpps = rows.map(row => {
-        const obj = {};
-        cols.forEach((col, i) => {
-          const cell = row.c[i];
-          obj[col] = cell ? (cell.f || cell.v || "") : "";
-        });
-        return obj;
-      }).filter(o => o["Nombre"] || o["nombre"] || o["URL"] || o["url"]);
+      allOpps = rows
+        .map(row => ({
+          nombre:   cellVal(row, COL.nombre),
+          entidad:  cellVal(row, COL.entidad),
+          monto:    cellVal(row, COL.monto),
+          apertura: cellVal(row, COL.apertura),
+          cierre:   cellVal(row, COL.cierre),
+          link:     cellVal(row, COL.link),
+          entidadP: cellVal(row, COL.entidadP),
+          estado:   cellVal(row, COL.estado),
+          urgencia: cellVal(row, COL.urgencia),
+        }))
+        .filter(o => o.nombre !== "");
 
       document.getElementById("last-updated").textContent =
         `Última carga: ${new Date().toLocaleString('es-DO')}`;
@@ -210,39 +261,29 @@
       document.getElementById("grid").style.display = "grid";
     } catch (e) {
       document.getElementById("loading").textContent =
-        "Error al cargar datos. Asegúrate de que el Sheet es público.";
+        "Error al cargar datos. Verifica que el Sheet sea público.";
       console.error(e);
     }
   }
 
-  function f(opp, ...keys) {
-    for (const k of keys) {
-      if (opp[k] !== undefined && opp[k] !== "") return opp[k];
-      const cap = k.charAt(0).toUpperCase() + k.slice(1);
-      if (opp[cap] !== undefined && opp[cap] !== "") return opp[cap];
-    }
-    return "";
+  function escHtml(str) {
+    return String(str || "")
+      .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
   }
 
-  function urgencyClass(urgencia) {
-    const u = (urgencia || "").toLowerCase();
+  function urgencyClass(u) {
+    u = (u || "").toLowerCase();
     if (u === "alta")  return "urgency-alta";
     if (u === "media") return "urgency-media";
-    if (u === "baja")  return "urgency-baja";
-    return "urgency-default";
+    return "urgency-baja";
   }
 
-  function urgencyBadgeClass(urgencia) {
-    const u = (urgencia || "").toLowerCase();
+  function urgencyBadgeClass(u) {
+    u = (u || "").toLowerCase();
     if (u === "alta")  return "badge-alta";
     if (u === "media") return "badge-media";
     return "badge-baja";
-  }
-
-  function escHtml(str) {
-    return String(str)
-      .replace(/&/g,"&amp;").replace(/</g,"&lt;")
-      .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
   }
 
   function renderCards(opps) {
@@ -260,33 +301,25 @@
       return;
     }
 
-    grid.innerHTML = opps.map(opp => {
-      const nombre   = f(opp, "Nombre", "nombre") || "(Sin nombre)";
-      const entidad  = f(opp, "Entidad", "entidad");
-      const monto    = f(opp, "Monto", "monto");
-      const cierre   = f(opp, "Fecha_Cierre", "fecha_cierre");
-      const estado   = f(opp, "Estado", "estado") || "Identificado";
-      const urgencia = f(opp, "Urgencia", "urgencia") || "";
-      const entidadP = f(opp, "Entidad_Parceria", "entidad_parceria");
-      const url      = f(opp, "URL", "url");
-      const uClass   = urgencyClass(urgencia);
-      const uBadge   = urgencyBadgeClass(urgencia);
-
+    grid.innerHTML = opps.map(o => {
+      const uClass   = urgencyClass(o.urgencia);
+      const uBadge   = urgencyBadgeClass(o.urgencia);
+      const safeUrl  = o.link ? o.link.replace(/'/g, "\\'") : "";
       return `
-        <div class="card ${uClass}" onclick="${url ? `window.open('${url.replace(/'/g,"\\'")}','_blank')` : ''}">
+        <div class="card ${uClass}" onclick="${safeUrl ? `window.open('${safeUrl}','_blank')` : ''}">
           <div class="card-urgency-bar"></div>
           <div class="card-body">
-            <div class="card-title">${escHtml(nombre)}</div>
-            <div class="card-entidad">${escHtml(entidad)}</div>
+            <div class="card-title">${escHtml(o.nombre)}</div>
+            <div class="card-entidad">${escHtml(o.entidad)}</div>
             <div class="card-meta">
-              ${estado    ? `<span class="badge badge-estado">${escHtml(estado)}</span>` : ""}
-              ${urgencia  ? `<span class="badge badge-urgencia ${uBadge}">${escHtml(urgencia)}</span>` : ""}
-              ${entidadP  ? `<span class="badge badge-entidad-p">${escHtml(entidadP)}</span>` : ""}
+              ${o.estado   ? `<span class="badge badge-estado">${escHtml(o.estado)}</span>` : ""}
+              ${o.urgencia ? `<span class="badge badge-urgencia ${uBadge}">${escHtml(o.urgencia)}</span>` : ""}
+              ${o.entidadP ? `<span class="badge badge-entidad-p">${escHtml(o.entidadP)}</span>` : ""}
             </div>
           </div>
           <div class="card-footer">
-            <span>${cierre ? "Cierre: " + escHtml(cierre) : "Sin fecha de cierre"}</span>
-            <span class="card-monto">${monto ? escHtml(monto) : ""}</span>
+            <span>${o.cierre ? "Cierre: " + escHtml(o.cierre) : "Sin fecha de cierre"}</span>
+            <span class="card-monto">${o.monto ? escHtml(o.monto) : ""}</span>
           </div>
         </div>`;
     }).join("");
@@ -298,14 +331,43 @@
     const entidadP = document.getElementById("filter-entidad-p").value;
     const urgencia = document.getElementById("filter-urgencia").value;
 
-    return allOpps.filter(opp => {
-      const nombre = (f(opp,"Nombre","nombre") + " " + f(opp,"Entidad","entidad")).toLowerCase();
-      if (q && !nombre.includes(q)) return false;
-      if (estado   && f(opp,"Estado","estado")                       !== estado)   return false;
-      if (entidadP && f(opp,"Entidad_Parceria","entidad_parceria")    !== entidadP) return false;
-      if (urgencia && f(opp,"Urgencia","urgencia")                    !== urgencia) return false;
+    return allOpps.filter(o => {
+      if (q        && !(o.nombre + " " + o.entidad).toLowerCase().includes(q)) return false;
+      if (estado   && o.estado   !== estado)   return false;
+      if (entidadP && o.entidadP !== entidadP) return false;
+      if (urgencia && o.urgencia !== urgencia) return false;
       return true;
     });
+  }
+
+  async function runMonitor() {
+    const btn = document.getElementById("btn-actualizar");
+    const msg = document.getElementById("update-msg");
+    btn.disabled = true;
+    btn.classList.add("loading");
+    msg.className = "";
+    msg.textContent = "";
+    try {
+      const res  = await fetch("http://localhost:5001/run-monitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        msg.className = "success";
+        msg.textContent = data.message || "Monitor ejecutado correctamente.";
+        setTimeout(loadData, 3000);
+      } else {
+        msg.className = "error";
+        msg.textContent = data.error || "Error al ejecutar el monitor.";
+      }
+    } catch (e) {
+      msg.className = "error";
+      msg.textContent = "No se pudo conectar al servidor local (localhost:5001). ¿Está corriendo start.sh?";
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove("loading");
+    }
   }
 
   ["search","filter-estado","filter-entidad-p","filter-urgencia"].forEach(id => {
