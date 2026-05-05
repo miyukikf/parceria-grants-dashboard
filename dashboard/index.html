@@ -136,6 +136,13 @@
     .badge-baja      { background: var(--verde); }
     .badge-entidad-p { background: #fff3cd; color: #856404; }
 
+    /* Apertura status badge */
+    .badge-apertura  { font-weight: 700; }
+    .badge-abierto   { background: #d4edda; color: #155724; }
+    .badge-cerrado   { background: #f8d7da; color: #721c24; }
+    .badge-proximo   { background: #fff3cd; color: #856404; }
+    .badge-sin-fecha { background: #e9ecef; color: #6c757d; }
+
     /* Mejora 3 — Status badge */
     .card-status {
       position: absolute; top: 12px; right: 12px;
@@ -224,6 +231,13 @@
     <option value="Media">Media (menos de 30 días)</option>
     <option value="Baja">Baja / Sin fecha</option>
   </select>
+  <select id="filter-apertura-estado">
+    <option value="">Abierto / Cerrado / Todos</option>
+    <option value="abierto">ABIERTO ahora</option>
+    <option value="proximo">PRÓXIMAMENTE</option>
+    <option value="sin-fecha">Sin fecha</option>
+    <option value="cerrado">CERRADO</option>
+  </select>
   <label class="filter-date-group">
     <span>Abre desde</span>
     <input type="date" id="filter-apertura-desde">
@@ -272,18 +286,23 @@
       const rows = json.table.rows || [];
 
       allOpps = rows
-        .map(row => ({
-          nombre:      cellVal(row, COL.nombre),
-          entidad:     cellVal(row, COL.entidad),
-          monto:       cellVal(row, COL.monto),
-          apertura:    cellVal(row, COL.apertura),
-          cierre:      cellVal(row, COL.cierre),
-          prioridades: cellVal(row, COL.prioridades),
-          link:        cellVal(row, COL.link),
-          entidadP:    cellVal(row, COL.entidadP),
-          estado:      cellVal(row, COL.estado),
-          urgencia:    cellVal(row, COL.urgencia),
-        }))
+        .map(row => {
+          const apertura = cellVal(row, COL.apertura);
+          const cierre   = cellVal(row, COL.cierre);
+          return {
+            nombre:          cellVal(row, COL.nombre),
+            entidad:         cellVal(row, COL.entidad),
+            monto:           cellVal(row, COL.monto),
+            apertura,
+            cierre,
+            prioridades:     cellVal(row, COL.prioridades),
+            link:            cellVal(row, COL.link),
+            entidadP:        cellVal(row, COL.entidadP),
+            estado:          cellVal(row, COL.estado),
+            urgencia:        cellVal(row, COL.urgencia),
+            apertura_status: computeStatus(apertura, cierre),
+          };
+        })
         .filter(o => o.nombre !== "");
 
       document.getElementById("last-updated").textContent =
@@ -321,6 +340,23 @@
     }
     return null;
   }
+
+  // Computed ABIERTO / CERRADO / PRÓXIMAMENTE status from dates vs today
+  function computeStatus(apertura, cierre) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const open  = parseDateStr(apertura);
+    const close = parseDateStr(cierre);
+    if (!open && !close) return "sin-fecha";
+    if (close && close < today) return "cerrado";
+    if (open  && open  > today) return "proximo";
+    return "abierto";
+  }
+  const STATUS_APERTURA_LABEL = {
+    "abierto":   "ABIERTO",
+    "cerrado":   "CERRADO",
+    "proximo":   "PRÓXIMAMENTE",
+    "sin-fecha": "Sin fecha",
+  };
 
   // Mejora 2 — infer category tags from prioridades field or keywords in nombre
   const TAG_RULES = [
@@ -376,10 +412,16 @@
     return "badge-baja";
   }
 
+  const STATUS_SORT_ORDER = { "abierto": 0, "proximo": 1, "sin-fecha": 2, "cerrado": 3 };
+
   function renderCards(opps) {
     const grid = document.getElementById("grid");
     const chip = document.getElementById("count-chip");
     chip.textContent = `${opps.length} oportunidad${opps.length !== 1 ? "es" : ""}`;
+    // Sort: open first, then upcoming, then no-date, then closed
+    opps = [...opps].sort((a, b) =>
+      (STATUS_SORT_ORDER[a.apertura_status] ?? 2) - (STATUS_SORT_ORDER[b.apertura_status] ?? 2)
+    );
 
     if (opps.length === 0) {
       grid.innerHTML = `<div class="empty">
@@ -399,6 +441,8 @@
       const tagsHtml = tags.length
         ? `<div class="card-tags">${tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join("")}</div>`
         : "";
+      const aStatus = o.apertura_status || "sin-fecha";
+      const aLabel  = STATUS_APERTURA_LABEL[aStatus] || aStatus;
       return `
         <div class="card ${uClass}" onclick="${safeUrl ? `window.open('${safeUrl}','_blank')` : ''}">
           <div class="card-urgency-bar"></div>
@@ -408,6 +452,7 @@
             <div class="card-entidad">${escHtml(o.entidad)}</div>
             ${tagsHtml}
             <div class="card-meta">
+              <span class="badge badge-apertura badge-${aStatus}">${aLabel}</span>
               ${o.urgencia ? `<span class="badge badge-urgencia ${uBadge}">${escHtml(o.urgencia)}</span>` : ""}
               ${o.entidadP ? `<span class="badge badge-entidad-p">${escHtml(o.entidadP)}</span>` : ""}
             </div>
@@ -421,20 +466,22 @@
   }
 
   function filterOpps() {
-    const q             = document.getElementById("search").value.toLowerCase();
-    const estado        = document.getElementById("filter-estado").value;
-    const entidadP      = document.getElementById("filter-entidad-p").value;
-    const urgencia      = document.getElementById("filter-urgencia").value;
-    const abreDesdeStr  = document.getElementById("filter-apertura-desde").value;
+    const q               = document.getElementById("search").value.toLowerCase();
+    const estado          = document.getElementById("filter-estado").value;
+    const entidadP        = document.getElementById("filter-entidad-p").value;
+    const urgencia        = document.getElementById("filter-urgencia").value;
+    const aperturaEstado  = document.getElementById("filter-apertura-estado").value;
+    const abreDesdeStr    = document.getElementById("filter-apertura-desde").value;
     const cierreAntesStr= document.getElementById("filter-cierre-antes").value;
     const abreDesde     = abreDesdeStr  ? new Date(abreDesdeStr)  : null;
     const cierreAntes   = cierreAntesStr? new Date(cierreAntesStr): null;
 
     return allOpps.filter(o => {
-      if (q        && !(o.nombre + " " + o.entidad).toLowerCase().includes(q)) return false;
-      if (estado   && o.estado   !== estado)   return false;
-      if (entidadP && o.entidadP !== entidadP) return false;
-      if (urgencia && o.urgencia !== urgencia) return false;
+      if (q              && !(o.nombre + " " + o.entidad).toLowerCase().includes(q)) return false;
+      if (estado         && o.estado          !== estado)        return false;
+      if (entidadP       && o.entidadP        !== entidadP)      return false;
+      if (urgencia       && o.urgencia        !== urgencia)      return false;
+      if (aperturaEstado && o.apertura_status !== aperturaEstado) return false;
 
       // Mejora 1 — date filters (ignore row if date is unparseable)
       if (abreDesde) {
@@ -480,7 +527,7 @@
     }
   }
 
-  ["search","filter-estado","filter-entidad-p","filter-urgencia",
+  ["search","filter-estado","filter-entidad-p","filter-urgencia","filter-apertura-estado",
    "filter-apertura-desde","filter-cierre-antes"].forEach(id => {
     document.getElementById(id).addEventListener("input", () => renderCards(filterOpps()));
   });

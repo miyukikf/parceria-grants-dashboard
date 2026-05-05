@@ -68,14 +68,28 @@ def ensure_columns(ws: gspread.Worksheet) -> dict:
     return col_map
 
 
-def get_existing_urls(ws: gspread.Worksheet) -> set:
-    """Return a set of all URLs already recorded in the sheet (deduplication key)."""
+def get_existing_keys(ws: gspread.Worksheet) -> tuple[set, set]:
+    """
+    Return (existing_urls, existing_name_entity_pairs) for deduplication.
+    name_entity key = normalized "nombre|entidad" string.
+    """
     records = ws.get_all_records()
     urls = set()
+    name_entity = set()
     for row in records:
-        url = row.get("URL") or row.get("url") or row.get("Url") or ""
+        url = row.get("Link") or row.get("link") or row.get("URL") or row.get("url") or ""
         if url:
             urls.add(url.strip())
+        nombre = str(row.get("Nombre de la oportunidad") or row.get("Nombre") or "").strip().lower()
+        entidad = str(row.get("Entidad") or "").strip().lower()
+        if nombre:
+            name_entity.add(f"{nombre}|{entidad}")
+    return urls, name_entity
+
+
+def get_existing_urls(ws: gspread.Worksheet) -> set:
+    """Backwards-compatible: return just the URL set."""
+    urls, _ = get_existing_keys(ws)
     return urls
 
 
@@ -91,12 +105,12 @@ def append_opportunity(ws: gspread.Worksheet, col_map: dict, opp: dict) -> None:
     row = [""] * len(headers)
 
     field_map = {
-        "Nombre": opp.get("nombre", ""),
+        "Nombre de la oportunidad": opp.get("nombre", ""),
         "Entidad": opp.get("entidad", ""),
-        "Monto": opp.get("monto", ""),
-        "Fecha_Cierre": opp.get("fecha_cierre", ""),
-        "URL": opp.get("url", ""),
-        "Descripcion": opp.get("descripcion", ""),
+        "Cantidad de fondos": opp.get("monto", ""),
+        "Fecha de cierre": opp.get("fecha_cierre", ""),
+        "Link": opp.get("url", ""),
+        "Requisitos": opp.get("descripcion", ""),
         "Entidad_Parceria": opp.get("entidad_parceria", "Todos"),
         "Estado": opp.get("estado", "Identificado"),
         "Urgencia": opp.get("urgencia", ""),

@@ -15,7 +15,7 @@ from sheets import (
     get_authenticated_client,
     open_sheet,
     ensure_columns,
-    get_existing_urls,
+    get_existing_keys,
     append_opportunity,
 )
 from email_notify import send_summary_email
@@ -53,9 +53,9 @@ def main():
     col_map = ensure_columns(ws)
     logger.info(f"Sheet opened. Columns: {list(col_map.keys())}")
 
-    # 2. Get existing URLs (deduplication)
-    existing_urls = get_existing_urls(ws)
-    logger.info(f"Existing opportunities in sheet: {len(existing_urls)}")
+    # 2. Get existing keys (deduplication)
+    existing_urls, existing_name_entity = get_existing_keys(ws)
+    logger.info(f"Existing opportunities in sheet: {len(existing_urls)} by URL, {len(existing_name_entity)} by name/entity")
 
     # 3. Scrape all sites
     logger.info("Starting web scraping...")
@@ -63,12 +63,31 @@ def main():
 
     # 4. Filter new + calculate urgency
     new_opps = []
+    seen_this_run = set()  # prevent duplicates within a single scrape run
     for opp in scraped:
         url = opp.get("url", "").strip()
-        if not url or url in existing_urls:
+        nombre = opp.get("nombre", "").strip().lower()
+        entidad = opp.get("entidad", "").strip().lower()
+        name_entity_key = f"{nombre}|{entidad}"
+
+        # Skip if already in sheet by URL
+        if url and url in existing_urls:
+            logger.debug(f"Skipping duplicate URL: {url}")
             continue
+        # Skip if already in sheet by name+entity (catches listing-page-URL duplicates)
+        if nombre and name_entity_key in existing_name_entity:
+            logger.debug(f"Skipping duplicate name/entity: {name_entity_key}")
+            continue
+        # Skip if seen in this run already
+        if name_entity_key in seen_this_run:
+            logger.debug(f"Skipping intra-run duplicate: {name_entity_key}")
+            continue
+
         opp["urgencia"] = calculate_urgency(opp.get("fecha_cierre", ""))
         new_opps.append(opp)
+        seen_this_run.add(name_entity_key)
+        if url:
+            existing_urls.add(url)  # prevent same URL appearing twice in one run
 
     logger.info(f"New opportunities to add: {len(new_opps)}")
 
