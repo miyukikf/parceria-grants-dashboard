@@ -136,6 +136,19 @@
     .badge-baja      { background: var(--verde); }
     .badge-entidad-p { background: #fff3cd; color: #856404; }
 
+    /* Interest label */
+    .label-btn {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 0.7rem; padding: 3px 9px; border-radius: 12px;
+      border: 1.5px dashed #bbb; background: #fafafa; color: #999;
+      cursor: pointer; font-weight: 600; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .label-btn:hover { border-color: var(--verde); color: var(--verde); }
+    .label-parceria   { background: #e8f5e9; color: #2D6A4F; border-color: #2D6A4F; border-style: solid; }
+    .label-gentebrava { background: #fce4ec; color: #880e4f; border-color: #c2185b; border-style: solid; }
+    .label-noaplica   { background: #eeeeee; color: #616161; border-color: #9e9e9e; border-style: solid; }
+
     /* Apertura status badge */
     .badge-apertura  { font-weight: 700; }
     .badge-abierto   { background: #d4edda; color: #155724; }
@@ -238,6 +251,13 @@
     <option value="sin-fecha">Sin fecha</option>
     <option value="cerrado">CERRADO</option>
   </select>
+  <select id="filter-etiqueta">
+    <option value="">Todas las etiquetas</option>
+    <option value="Parcería">Parcería</option>
+    <option value="Gente Brava">Gente Brava</option>
+    <option value="No aplica">No aplica</option>
+    <option value="_sin">Sin etiqueta</option>
+  </select>
   <label class="filter-date-group">
     <span>Abre desde</span>
     <input type="date" id="filter-apertura-desde">
@@ -254,7 +274,7 @@
 
 <script>
   const SHEET_ID = "1dU2Tep3gakBNDPR5zRJdth_MDb5X_TVUratBgmQESHg";
-  const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=Sheet1`;
+  const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&headers=1`;
 
   let allOpps = [];
 
@@ -358,6 +378,40 @@
     "sin-fecha": "Sin fecha",
   };
 
+  // ── Interest labels (stored in localStorage, editable on card) ──────────────
+  const LABELS       = ["Parcería", "Gente Brava", "No aplica"];
+  const LABEL_CLASS  = { "Parcería": "label-parceria", "Gente Brava": "label-gentebrava", "No aplica": "label-noaplica" };
+  const LS_KEY       = "parceria_interest_labels";
+
+  function loadLabels() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch(e) { return {}; }
+  }
+  function saveLabels(map) {
+    localStorage.setItem(LS_KEY, JSON.stringify(map));
+  }
+  function getLabelKey(o) {
+    return o.link || (o.nombre + "|" + o.entidad);
+  }
+  function getLabel(o) {
+    return loadLabels()[getLabelKey(o)] || "";
+  }
+  function cycleLabel(key) {
+    const map   = loadLabels();
+    const cur   = map[key] || "";
+    const idx   = LABELS.indexOf(cur);
+    const next  = idx === -1 ? LABELS[0] : (idx + 1 < LABELS.length ? LABELS[idx + 1] : "");
+    if (next) map[key] = next; else delete map[key];
+    saveLabels(map);
+    renderCards(filterOpps());   // re-render to update badges and filtered view
+  }
+  function labelBtnHtml(o) {
+    const lbl = getLabel(o);
+    const cls = lbl ? (LABEL_CLASS[lbl] || "") : "";
+    const txt = lbl || "+ Etiqueta";
+    const key = escHtml(getLabelKey(o)).replace(/"/g, "&quot;");
+    return `<button class="label-btn ${cls}" onclick="event.stopPropagation();cycleLabel('${getLabelKey(o).replace(/'/g,"\\'")}')" title="Clic para cambiar etiqueta">${escHtml(txt)}</button>`;
+  }
+
   // Mejora 2 — infer category tags from prioridades field or keywords in nombre
   const TAG_RULES = [
     { label: "Género / Mujeres",     kw: ["género","genero","mujeres","mujer","women","gender","femenin"] },
@@ -455,6 +509,7 @@
               <span class="badge badge-apertura badge-${aStatus}">${aLabel}</span>
               ${o.urgencia ? `<span class="badge badge-urgencia ${uBadge}">${escHtml(o.urgencia)}</span>` : ""}
               ${o.entidadP ? `<span class="badge badge-entidad-p">${escHtml(o.entidadP)}</span>` : ""}
+              ${labelBtnHtml(o)}
             </div>
           </div>
           <div class="card-footer">
@@ -471,6 +526,7 @@
     const entidadP        = document.getElementById("filter-entidad-p").value;
     const urgencia        = document.getElementById("filter-urgencia").value;
     const aperturaEstado  = document.getElementById("filter-apertura-estado").value;
+    const etiqueta        = document.getElementById("filter-etiqueta").value;
     const abreDesdeStr    = document.getElementById("filter-apertura-desde").value;
     const cierreAntesStr= document.getElementById("filter-cierre-antes").value;
     const abreDesde     = abreDesdeStr  ? new Date(abreDesdeStr)  : null;
@@ -482,6 +538,11 @@
       if (entidadP       && o.entidadP        !== entidadP)      return false;
       if (urgencia       && o.urgencia        !== urgencia)      return false;
       if (aperturaEstado && o.apertura_status !== aperturaEstado) return false;
+      if (etiqueta) {
+        const lbl = getLabel(o);
+        if (etiqueta === "_sin" && lbl) return false;
+        if (etiqueta !== "_sin" && lbl !== etiqueta) return false;
+      }
 
       // Mejora 1 — date filters (ignore row if date is unparseable)
       if (abreDesde) {
@@ -528,7 +589,7 @@
   }
 
   ["search","filter-estado","filter-entidad-p","filter-urgencia","filter-apertura-estado",
-   "filter-apertura-desde","filter-cierre-antes"].forEach(id => {
+   "filter-etiqueta","filter-apertura-desde","filter-cierre-antes"].forEach(id => {
     document.getElementById(id).addEventListener("input", () => renderCards(filterOpps()));
   });
 
